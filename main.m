@@ -900,17 +900,27 @@ static NSString *AbsolutePath(NSString *path) {
             [NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:path];
     return path.stringByStandardizingPath;
 }
-static void Usage(void) {
-    puts("Usage: momos --model FILE INPUT.ipa OUTPUT.ipa\n"
-         "       sudo momos enroll INPUT.ipa OUTPUT.bin\n"
-         "       momos enroll --capture DIR INPUT.ipa OUTPUT.bin\n"
-         "enroll exports existing Mac enrollment offline; it does not authorize accounts.\n"
-         "--capture reads a private local snapshot instead of system enrollment.\n"
-         "Offline ARM64/arm64e/arm64_32 IPA decryption using a matching FPSENR2 model.\n"
-         "Decryption requires --model FILE with owner-only permissions (0600).\n"
-         "--help (-h) shows this help; --version prints the version.\n"
-         "SINF/SUPF and encrypted CodeDirectory hashes are checked. Originals are\n"
-         "never modified; existing output is refused. Output requires re-signing.");
+static void Usage(bool enroll) {
+    if (enroll)
+        puts("Export existing Mac enrollment for an IPA.\n"
+             "\nUsage:\n"
+             "  sudo momos enroll INPUT.ipa OUTPUT.bin\n"
+             "  momos enroll --capture DIR INPUT.ipa OUTPUT.bin\n"
+             "\nFlags:\n"
+             "      --capture DIR  Read a private enrollment capture");
+    else
+        puts("Offline IPA decryption and enrollment export.\n"
+             "\nUsage:\n"
+             "  momos --model FILE INPUT.ipa OUTPUT.ipa\n"
+             "  momos [command]\n"
+             "\nAvailable Commands:\n"
+             "  enroll            Export existing Mac enrollment\n"
+             "\nFlags:\n"
+             "      --model FILE   Private enrollment file (required)");
+    puts("  -h, --help         Show help\n"
+         "      --version      Show version");
+    puts(enroll ? "\nRequires existing authorization for the app's Apple account."
+                : "\nUse \"momos enroll --help\" for enrollment options.");
 }
 #include "enroll.inc"
 int main(int argc, const char *argv[]) {
@@ -933,7 +943,7 @@ int main(int argc, const char *argv[]) {
                 }
                 if (!positional &&
                     ([arg isEqualToString:@"--help"] || [arg isEqualToString:@"-h"])) {
-                    Usage();
+                    Usage(enroll);
                     return 0;
                 }
                 if (!positional && [arg isEqualToString:@"--version"]) {
@@ -955,7 +965,7 @@ int main(int argc, const char *argv[]) {
                 [paths addObject:arg];
             }
             if (paths.count != 2) {
-                Usage();
+                Usage(enroll);
                 return 2;
             }
             struct rlimit core = {0, 0};
