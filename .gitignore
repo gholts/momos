@@ -1,0 +1,11 @@
+/build/
+/dist/
+/tests/
+*.ipa
+*.bin
+*.pkl
+*.pkl.gz
+*.model
+*.model.gz
+.momos-*
+.DS_Store
