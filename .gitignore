@@ -1,11 +1,36 @@
+# Build and debug output
 /build/
 /dist/
+/momos
+*.o
+*.d
+*.dSYM/
+*.log
+
+# Local research and account data
 /tests/
+/local-tests/
+/work/
+/private/
+/captures/
 *.ipa
+*.sinf
+*.supf
+*.sidb
+*.sidd
+*.sids
 *.bin
 *.pkl
 *.pkl.gz
 *.model
 *.model.gz
 .momos-*
+
+# Local caches and editor backups
 .DS_Store
+__pycache__/
+*.py[cod]
+*.swp
+*.swo
+*.orig
+*~
