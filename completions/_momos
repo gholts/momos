@@ -1,7 +1,21 @@
 #compdef momos
-_arguments \
+local state
+if [[ $words[2] == enroll ]]; then
+  _arguments \
+    '--capture[Private enrollment snapshot]:directory:_files -/' \
+    '(-h --help)'{-h,--help}'[Show help]' \
+    '--version[Show version]' \
+    '1:command:(enroll)' \
+    '2:input IPA:_files -g "*.ipa"' \
+    '3:output model:_files'
+  return
+fi
+_arguments -C \
   '--model[Matching private FPSENR2 model]:model:_files' \
   '(-h --help)'{-h,--help}'[Show help]' \
   '--version[Show version]' \
-  '1:input IPA:_files -g "*.ipa"' \
+  '1:input IPA or command:->first' \
   '2:output IPA:_files'
+if [[ $state == first ]]; then
+  _alternative 'command:command:(enroll)' 'file:input IPA:_files -g "*.ipa"'
+fi

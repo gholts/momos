@@ -1,3 +1,5 @@
-complete -c momos -l model -r -d 'Matching private FPSENR2 model'
+complete -c momos -n '__fish_use_subcommand' -a enroll -d 'Export existing enrollment'
+complete -c momos -n 'not __fish_seen_subcommand_from enroll' -l model -r -d 'Matching private FPSENR2 model'
+complete -c momos -n '__fish_seen_subcommand_from enroll' -l capture -r -a '(__fish_complete_directories)' -d 'Private enrollment snapshot'
 complete -c momos -s h -l help -d 'Show help'
 complete -c momos -l version -d 'Show version'

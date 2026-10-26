@@ -902,12 +902,17 @@ static NSString *AbsolutePath(NSString *path) {
 }
 static void Usage(void) {
     puts("Usage: momos --model FILE INPUT.ipa OUTPUT.ipa\n"
+         "       sudo momos enroll INPUT.ipa OUTPUT.bin\n"
+         "       momos enroll --capture DIR INPUT.ipa OUTPUT.bin\n"
+         "enroll exports existing Mac enrollment offline; it does not authorize accounts.\n"
+         "--capture reads a private local snapshot instead of system enrollment.\n"
          "Offline ARM64/arm64e/arm64_32 IPA decryption using a matching FPSENR2 model.\n"
          "Decryption requires --model FILE with owner-only permissions (0600).\n"
          "--help (-h) shows this help; --version prints the version.\n"
          "SINF/SUPF and encrypted CodeDirectory hashes are checked. Originals are\n"
          "never modified; existing output is refused. Output requires re-signing.");
 }
+#include "enroll.inc"
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         Model model = {0};
@@ -917,9 +922,10 @@ int main(int argc, const char *argv[]) {
         umask(077);
         @try {
             NSMutableArray<NSString *> *paths = [NSMutableArray array];
-            NSString *modelPath = nil;
+            NSString *modelPath = nil, *capture = nil;
+            bool enroll = argc > 1 && !strcmp(argv[1], "enroll");
             bool positional = false;
-            for (int i = 1; i < argc; i++) {
+            for (int i = enroll ? 2 : 1; i < argc; i++) {
                 NSString *arg = @(argv[i]);
                 if (!positional && [arg isEqualToString:@"--"]) {
                     positional = true;
@@ -935,8 +941,14 @@ int main(int argc, const char *argv[]) {
                     return 0;
                 }
                 if (!positional && [arg isEqualToString:@"--model"]) {
+                    Check(!enroll, @"enroll does not accept --model");
                     Check(++i < argc && !modelPath, @"--model requires one file");
                     modelPath = @(argv[i]);
+                    continue;
+                }
+                if (!positional && [arg isEqualToString:@"--capture"]) {
+                    Check(enroll && ++i < argc && !capture, @"--capture requires one directory with enroll");
+                    capture = @(argv[i]);
                     continue;
                 }
                 Check(positional || ![arg hasPrefix:@"-"], @"Unknown option: %@", arg);
@@ -948,6 +960,11 @@ int main(int argc, const char *argv[]) {
             }
             struct rlimit core = {0, 0};
             Check(setrlimit(RLIMIT_CORE, &core) == 0, @"Cannot disable core dumps");
+            if (enroll) {
+                Enroll(AbsolutePath(paths[0]), AbsolutePath(paths[1]), capture ? AbsolutePath(capture) : nil);
+                puts("Exported validated enrollment model (0600).");
+                return 0;
+            }
             Check(modelPath.length > 0, @"Missing required --model FILE");
             LoadModel(AbsolutePath(modelPath), &model);
             Totals totals = DecryptArchive(AbsolutePath(paths[0]), AbsolutePath(paths[1]), &model);
