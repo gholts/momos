@@ -7,6 +7,7 @@
 #include <libkern/OSByteOrder.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
+#include <sys/resource.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
@@ -118,13 +119,37 @@ static NSMutableData *ReadRange(int fd, uint64_t offset, size_t size) {
     ReadAt(fd, data.mutableBytes, size, offset);
     return data;
 }
+static bool Unchanged(struct stat a, struct stat b) {
+    return a.st_size == b.st_size &&
+        a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec &&
+        a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec &&
+        a.st_ctimespec.tv_sec == b.st_ctimespec.tv_sec &&
+        a.st_ctimespec.tv_nsec == b.st_ctimespec.tv_nsec;
+}
 
 typedef struct {
     uint32_t user, keyID;
     uint8_t key[16], whitening[16], tables[16][256];
 } Model;
+static void DecodeModel(const uint8_t raw[4184], Model *model) {
+    Check(memcmp(raw, "FPSENR2\0", 8) == 0 && LE32(raw + 8) == 2 && LE32(raw + 12) == 4184,
+          @"Invalid FPSENR2 model header");
+    model->user = LE32(raw + 0x30);
+    model->keyID = LE32(raw + 0x34);
+    memcpy(model->key, raw + 0x38, 16);
+    memcpy(model->whitening, raw + 0x48, 16);
+    memcpy(model->tables, raw + 0x58, 4096);
+    for (int i = 0; i < 16; i++) {
+        bool seen[256] = {0};
+        for (int j = 0; j < 256; j++) {
+            uint8_t v = model->tables[i][j];
+            Check(!seen[v], @"Invalid model permutation");
+            seen[v] = true;
+        }
+    }
+}
 static void LoadModel(NSString *path, Model *model) {
-    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     Check(fd >= 0, @"Cannot open private model: %s", strerror(errno));
     uint8_t raw[4184] = {0};
     @try {
@@ -134,22 +159,7 @@ static void LoadModel(NSString *path, Model *model) {
         Check((uint64_t)st.st_size == sizeof(raw),
               @"Expected a 4,184-byte FPSENR2 enrollment model");
         ReadAt(fd, raw, sizeof(raw), 0);
-        Check(memcmp(raw, "FPSENR2\0", 8) == 0 && LE32(raw + 8) == 2 &&
-                  LE32(raw + 12) == sizeof(raw),
-              @"Invalid FPSENR2 model header");
-        model->user = LE32(raw + 0x30);
-        model->keyID = LE32(raw + 0x34);
-        memcpy(model->key, raw + 0x38, 16);
-        memcpy(model->whitening, raw + 0x48, 16);
-        memcpy(model->tables, raw + 0x58, 4096);
-        for (int i = 0; i < 16; i++) {
-            bool seen[256] = {0};
-            for (int j = 0; j < 256; j++) {
-                uint8_t v = model->tables[i][j];
-                Check(!seen[v], @"Invalid model permutation");
-                seen[v] = true;
-            }
-        }
+        DecodeModel(raw, model);
     } @finally {
         Wipe(raw, sizeof(raw));
         close(fd);
@@ -395,7 +405,7 @@ static void VerifySignature(int fd, Slice slice, uint32_t sigOffset, uint32_t si
     const uint8_t *b = data.bytes;
     Check(BE32(b) == 0xfade0cc0, @"Missing embedded code-signature superblob");
     uint64_t total = BE32(b + 4), count = BE32(b + 8);
-    Check(total >= 12 && total <= sigSize && count <= (total - 12) / 8,
+    Check(total >= 12 && total <= sigSize && count <= 64 && count <= (total - 12) / 8,
           @"Invalid signature superblob");
     unsigned directories = 0;
     for (uint64_t i = 0; i < count; i++) {
@@ -528,7 +538,7 @@ static void DecryptSlice(int fd, Slice slice, NSString *member, NSDictionary *li
           @"Unsupported encrypted Mach-O architecture/scheme: %@", member);
     Check(cryptSize > 0 && cryptOffset % PageBytes == 0 && cryptSize % PageBytes == 0 &&
               cryptOffset <= slice.size && cryptSize <= slice.size - cryptOffset &&
-              idOffset + 4 <= cryptOffset,
+              headerBytes + commandBytes <= cryptOffset,
           @"Invalid encrypted page range");
     Check(hasSignature, @"Encrypted image lacks code signature");
     NSString *base =
@@ -649,12 +659,24 @@ static NSString *EntryPath(struct archive_entry *entry) {
               @"Unsafe ZIP path");
     return path;
 }
-static bool AcceptEntry(struct archive_entry *entry, NSString *path, NSMutableDictionary *seen) {
+typedef struct { uint64_t entries, nameBytes, totalBytes, largest; } ArchiveBudget;
+static bool AcceptEntry(struct archive_entry *entry, NSString *path, NSMutableDictionary *seen,
+                        ArchiveBudget *budget) {
+    CheckCancelled();
+    Check(++budget->entries <= 100000, @"Too many IPA entries");
+    uint64_t nameBytes = path.length * sizeof(unichar);
+    Check(nameBytes <= MetadataLimit - budget->nameBytes, @"IPA path metadata exceeds 64 MiB");
+    budget->nameBytes += nameBytes;
     mode_t type = archive_entry_filetype(entry);
     Check(type == AE_IFREG || type == AE_IFDIR || type == AE_IFLNK,
           @"Unsupported ZIP entry type: %@", path);
     Check(archive_entry_hardlink(entry) == NULL, @"Hard links unsupported in IPA");
     Check(archive_entry_size(entry) >= 0, @"Invalid ZIP entry size");
+    uint64_t size = (uint64_t)archive_entry_size(entry);
+    Check(size <= (16ULL << 30) && budget->totalBytes <= (64ULL << 30) - size,
+          @"IPA exceeds processing size limit");
+    budget->totalBytes += size;
+    budget->largest = MAX(budget->largest, size);
     Check(type != AE_IFDIR || archive_entry_size(entry) == 0, @"Directory entry contains data");
     Check(![path hasSuffix:@"/"] || type == AE_IFDIR, @"Non-directory path ends in slash");
     NSString *key = [path hasSuffix:@"/"] ? [path substringToIndex:path.length - 1] : path;
@@ -718,7 +740,7 @@ static Totals DecryptArchive(NSString *input, NSString *output, const Model *mod
         struct stat st;
         Check(lstat(output.fileSystemRepresentation, &st) != 0 && errno == ENOENT,
               @"Output already exists or cannot be inspected");
-        inputFD = open(input.fileSystemRepresentation, O_RDONLY | O_CLOEXEC);
+        inputFD = open(input.fileSystemRepresentation, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
         Check(inputFD >= 0, @"Cannot open input IPA: %s", strerror(errno));
         struct stat initial;
         Check(fstat(inputFD, &initial) == 0 && S_ISREG(initial.st_mode),
@@ -727,19 +749,16 @@ static Totals DecryptArchive(NSString *input, NSString *output, const Model *mod
         struct archive_entry *entry;
         int status;
         NSMutableDictionary *seen = [NSMutableDictionary dictionary];
-        uint64_t metadataBytes = 0, totalBytes = 0, largest = 0;
+        uint64_t metadataBytes = 0;
+        ArchiveBudget budget = {0};
         while ((status = archive_read_next_header(reader, &entry)) == ARCHIVE_OK) {
             @autoreleasepool {
                 NSString *path = EntryPath(entry);
-                if (!AcceptEntry(entry, path, seen)) {
-                    archive_read_data_skip(reader);
+                if (!AcceptEntry(entry, path, seen, &budget)) {
+                    Check(archive_read_data_skip(reader) == ARCHIVE_OK, @"ZIP skip failed");
                     continue;
                 }
                 uint64_t size = (uint64_t)archive_entry_size(entry);
-                Check(size <= (16ULL << 30) && totalBytes <= (64ULL << 30) - size,
-                      @"IPA exceeds processing size limit");
-                totalBytes += size;
-                largest = MAX(largest, size);
                 bool regular = archive_entry_filetype(entry) == AE_IFREG;
                 bool info = [[path.stringByDeletingLastPathComponent lastPathComponent]
                     isEqualToString:@"SC_Info"];
@@ -765,7 +784,7 @@ static Totals DecryptArchive(NSString *input, NSString *output, const Model *mod
         Check(statfs(parent.fileSystemRepresentation, &space) == 0,
               @"Output directory does not exist");
         Check((uint64_t)space.f_bavail * (uint64_t)space.f_bsize >
-                  totalBytes + largest + (64ULL << 20),
+                  budget.totalBytes + budget.largest + (64ULL << 20),
               @"Insufficient free space for safe temporary processing");
         temporary = CreateTemporary(parent, &outputFD);
         spool = CreateTemporary(parent, &spoolFD);
@@ -778,13 +797,13 @@ static Totals DecryptArchive(NSString *input, NSString *output, const Model *mod
         Check(archive_write_open_fd(writer, outputFD) == ARCHIVE_OK, @"Cannot open ZIP output");
         reader = OpenZIP(inputFD);
         [seen removeAllObjects];
+        budget = (ArchiveBudget){0};
         uint8_t buffer[BufferBytes];
         while ((status = archive_read_next_header(reader, &entry)) == ARCHIVE_OK) {
             @autoreleasepool {
-                CheckCancelled();
                 NSString *path = EntryPath(entry);
-                if (!AcceptEntry(entry, path, seen)) {
-                    archive_read_data_skip(reader);
+                if (!AcceptEntry(entry, path, seen, &budget)) {
+                    Check(archive_read_data_skip(reader) == ARCHIVE_OK, @"ZIP skip failed");
                     continue;
                 }
                 uint64_t expected = (uint64_t)archive_entry_size(entry);
@@ -841,11 +860,7 @@ static Totals DecryptArchive(NSString *input, NSString *output, const Model *mod
         Check(status == ARCHIVE_EOF, @"ZIP read failed: %s", archive_error_string(reader));
         Check(totals.images > 0, @"No encrypted ARM64 images found");
         struct stat final;
-        Check(fstat(inputFD, &final) == 0 && initial.st_size == final.st_size &&
-                  initial.st_mtimespec.tv_sec == final.st_mtimespec.tv_sec &&
-                  initial.st_mtimespec.tv_nsec == final.st_mtimespec.tv_nsec &&
-                  initial.st_ctimespec.tv_sec == final.st_ctimespec.tv_sec &&
-                  initial.st_ctimespec.tv_nsec == final.st_ctimespec.tv_nsec,
+        Check(fstat(inputFD, &final) == 0 && Unchanged(initial, final),
               @"Input IPA changed during processing");
         archive_read_free(reader);
         reader = NULL;
@@ -888,7 +903,7 @@ static NSString *AbsolutePath(NSString *path) {
 static void Usage(void) {
     puts("Usage: momos --model FILE INPUT.ipa OUTPUT.ipa\n"
          "Offline ARM64/arm64e/arm64_32 IPA decryption using a matching FPSENR2 model.\n"
-         "--model FILE is required; the model must have owner-only permissions (0600).\n"
+         "Decryption requires --model FILE with owner-only permissions (0600).\n"
          "--help (-h) shows this help; --version prints the version.\n"
          "SINF/SUPF and encrypted CodeDirectory hashes are checked. Originals are\n"
          "never modified; existing output is refused. Output requires re-signing.");
@@ -931,6 +946,8 @@ int main(int argc, const char *argv[]) {
                 Usage();
                 return 2;
             }
+            struct rlimit core = {0, 0};
+            Check(setrlimit(RLIMIT_CORE, &core) == 0, @"Cannot disable core dumps");
             Check(modelPath.length > 0, @"Missing required --model FILE");
             LoadModel(AbsolutePath(modelPath), &model);
             Totals totals = DecryptArchive(AbsolutePath(paths[0]), AbsolutePath(paths[1]), &model);
