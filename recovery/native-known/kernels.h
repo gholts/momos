@@ -1,0 +1,11 @@
+void r_kernel_cycle(RState *s);
+void r_kernel_cyclefinal(RState *s);
+void r_kernel_digest(RState *s);
+void r_kernel_digestprologue(RState *s);
+void r_kernel_even(RState *s);
+void r_kernel_odd(RState *s);
+void r_kernel_optional(RState *s);
+void r_kernel_outer(RState *s);
+void r_kernel_tail(RState *s);
+void r_kernel_writer(RState *s);
+void r_kernel_loop(RState *s, int kind);

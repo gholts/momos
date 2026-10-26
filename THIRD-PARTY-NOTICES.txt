@@ -56,3 +56,14 @@ OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
 WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
 OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Native enrollment recovery and account-independent constants are adapted
+from DrWhax/unfairplay, revision 6022acd8b694be578bf92edf51173bda67b9f65c:
+https://github.com/DrWhax/unfairplay
+
+The MIT license reproduced above also applies to this derived recovery code.
+Upstream UnfairPlay includes ipatool and DrWhax FairPlay research code through
+commit 60208cf, used under MIT.
+
+Apple, FairPlay, macOS, iOS, and App Store are trademarks of Apple Inc.
+This project is independent and is not affiliated with or endorsed by Apple.
