@@ -9,14 +9,18 @@ RECOVERY_SOURCES = $(wildcard recovery/native-blocks/*.c recovery/native-known/*
 RECOVERY_OBJECTS = $(patsubst %.c,build/%.o,$(RECOVERY_SOURCES)) build/recovery/data.o
 RECOVERY_HEADERS = $(wildcard recovery/*.h recovery/*.inc recovery/native-blocks/*.inc recovery/native-known/*.inc recovery/native-known/*.h)
 
-.PHONY: all install clean
+.PHONY: all install clean FORCE
 all: build/momos
 
 build:
 	mkdir -p $@
 
-build/momos: main.m enroll.inc Makefile vendor/archive.h vendor/archive_entry.h $(RECOVERY_OBJECTS) | build
+build/momos: main.m enroll.inc Makefile build/version vendor/archive.h vendor/archive_entry.h $(RECOVERY_OBJECTS) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(OBJCFLAGS) -DMOMOS_VERSION='"$(VERSION)"' main.m $(RECOVERY_OBJECTS) $(LDFLAGS) $(LIBS) -o $@
+
+build/version: FORCE | build
+	@printf '%s\n' '$(VERSION)' > $@.tmp
+	@cmp -s $@.tmp $@ && rm $@.tmp || mv $@.tmp $@
 
 build/recovery/%.o: recovery/%.c $(RECOVERY_HEADERS) Makefile
 	mkdir -p "$(@D)"
