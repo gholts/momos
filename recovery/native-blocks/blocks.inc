@@ -2646,6 +2646,21 @@ uint64_t r_bb_100cbd000(RState *s);
 uint64_t r_bb_100cbe478(RState *s);
 uint64_t r_bb_100cbe540(RState *s);
 uint64_t r_bb_100cbe5e8(RState *s);
+uint64_t r_bb_1005ea024(RState *s);
+uint64_t r_bb_1005ea424(RState *s);
+uint64_t r_bb_1008c292c(RState *s);
+uint64_t r_bb_1008fff2c(RState *s);
+uint64_t r_bb_10095e9dc(RState *s);
+uint64_t r_bb_1009a1f04(RState *s);
+uint64_t r_bb_1009a2304(RState *s);
+uint64_t r_bb_1009ef5e4(RState *s);
+uint64_t r_bb_100a06948(RState *s);
+uint64_t r_bb_100a1278c(RState *s);
+uint64_t r_bb_100a42a30(RState *s);
+uint64_t r_bb_100a4be38(RState *s);
+uint64_t r_bb_100aa281c(RState *s);
+uint64_t r_bb_100aa2c1c(RState *s);
+uint64_t r_bb_100b0b1d0(RState *s);
 static const struct { uint64_t address; uint64_t (*function)(RState *); } r_missing_blocks[] = {
     {UINT64_C(0x100009d80), r_bb_100009d80},
     {UINT64_C(0x100009df0), r_bb_100009df0},
@@ -4376,6 +4391,8 @@ static const struct { uint64_t address; uint64_t (*function)(RState *); } r_miss
     {UINT64_C(0x1005e8520), r_bb_1005e8520},
     {UINT64_C(0x1005e8f88), r_bb_1005e8f88},
     {UINT64_C(0x1005e9164), r_bb_1005e9164},
+    {UINT64_C(0x1005ea024), r_bb_1005ea024},
+    {UINT64_C(0x1005ea424), r_bb_1005ea424},
     {UINT64_C(0x1005edc9c), r_bb_1005edc9c},
     {UINT64_C(0x1005ef22c), r_bb_1005ef22c},
     {UINT64_C(0x1005ef4e0), r_bb_1005ef4e0},
@@ -5212,6 +5229,7 @@ static const struct { uint64_t address; uint64_t (*function)(RState *); } r_miss
     {UINT64_C(0x1008c270c), r_bb_1008c270c},
     {UINT64_C(0x1008c2800), r_bb_1008c2800},
     {UINT64_C(0x1008c2810), r_bb_1008c2810},
+    {UINT64_C(0x1008c292c), r_bb_1008c292c},
     {UINT64_C(0x1008c30c8), r_bb_1008c30c8},
     {UINT64_C(0x1008c6398), r_bb_1008c6398},
     {UINT64_C(0x1008c6450), r_bb_1008c6450},
@@ -5254,6 +5272,7 @@ static const struct { uint64_t address; uint64_t (*function)(RState *); } r_miss
     {UINT64_C(0x1008feb48), r_bb_1008feb48},
     {UINT64_C(0x1008fec40), r_bb_1008fec40},
     {UINT64_C(0x1008ff958), r_bb_1008ff958},
+    {UINT64_C(0x1008fff2c), r_bb_1008fff2c},
     {UINT64_C(0x100901b64), r_bb_100901b64},
     {UINT64_C(0x100901b80), r_bb_100901b80},
     {UINT64_C(0x100901c14), r_bb_100901c14},
@@ -5272,10 +5291,21 @@ static const struct { uint64_t address; uint64_t (*function)(RState *); } r_miss
     {UINT64_C(0x100947000), r_bb_100947000},
     {UINT64_C(0x10095e6f8), r_bb_10095e6f8},
     {UINT64_C(0x10095e75c), r_bb_10095e75c},
+    {UINT64_C(0x10095e9dc), r_bb_10095e9dc},
     {UINT64_C(0x10098acb4), r_bb_10098acb4},
+    {UINT64_C(0x1009a1f04), r_bb_1009a1f04},
+    {UINT64_C(0x1009a2304), r_bb_1009a2304},
     {UINT64_C(0x1009e384c), r_bb_1009e384c},
+    {UINT64_C(0x1009ef5e4), r_bb_1009ef5e4},
+    {UINT64_C(0x100a06948), r_bb_100a06948},
+    {UINT64_C(0x100a1278c), r_bb_100a1278c},
+    {UINT64_C(0x100a42a30), r_bb_100a42a30},
+    {UINT64_C(0x100a4be38), r_bb_100a4be38},
+    {UINT64_C(0x100aa281c), r_bb_100aa281c},
+    {UINT64_C(0x100aa2c1c), r_bb_100aa2c1c},
     {UINT64_C(0x100aeba1c), r_bb_100aeba1c},
     {UINT64_C(0x100aebaa0), r_bb_100aebaa0},
+    {UINT64_C(0x100b0b1d0), r_bb_100b0b1d0},
     {UINT64_C(0x100b2fc14), r_bb_100b2fc14},
     {UINT64_C(0x100b2fc94), r_bb_100b2fc94},
     {UINT64_C(0x100b470c4), r_bb_100b470c4},

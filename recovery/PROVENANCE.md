@@ -16,4 +16,7 @@ SHA-256:
 All capture files and directories must be owner-only and belong to the caller.
 
 Enrollment is validated on one Mac. Unsupported layouts fail without output.
+Recovery uses a temporary SINF request with the original media type and native
+mode `0x1000`. Original selectors and encrypted payload stay intact; the original
+SINF validates the result before the model is written.
 Decryption checks encrypted-code hashes, not Apple signature trust.

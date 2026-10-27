@@ -77,7 +77,31 @@ static void HostMAC(uint8_t bytes[6]) {
         if (service) IOObjectRelease(service);
     }
 }
-static NSDictionary<NSString *, NSMutableData *> *EnrollmentApp(int fd, NSString **executable) {
+static void *EnrollmentImage(struct archive *reader, uint64_t size) {
+    Check(size > 0, @"Empty enrollment executable");
+    int fd = -1;
+    NSString *temporary = CreateTemporary(NSTemporaryDirectory(), &fd);
+    @try {
+        Check(unlink(temporary.fileSystemRepresentation) == 0, @"Cannot unlink enrollment spool");
+        temporary = nil;
+        struct statfs space;
+        Check(fstatfs(fd, &space) == 0 && (uint64_t)space.f_bavail * (uint64_t)space.f_bsize > size + MetadataLimit,
+              @"Insufficient space for enrollment executable");
+        uint8_t buffer[BufferBytes]; uint64_t offset = 0; la_ssize_t n;
+        while ((n = archive_read_data(reader, buffer, sizeof(buffer))) > 0) {
+            Check(offset <= size && (uint64_t)n <= size - offset, @"Executable exceeds declared ZIP size");
+            WriteAt(fd, buffer, (size_t)n, offset); offset += (uint64_t)n;
+        }
+        Check(n == 0 && offset == size, @"Executable ZIP CRC/read error");
+        void *mapping = mmap(NULL, (size_t)size, PROT_READ, MAP_PRIVATE, fd, 0);
+        Check(mapping != MAP_FAILED, @"Cannot map enrollment executable: %s", strerror(errno));
+        return mapping;
+    } @finally {
+        close(fd);
+        if (temporary) unlink(temporary.fileSystemRepresentation);
+    }
+}
+static NSDictionary<NSString *, NSMutableData *> *EnrollmentApp(int fd, NSString **executable, RFile *image) {
     struct archive *reader = NULL;
     NSMutableDictionary *files = [NSMutableDictionary dictionary];
     NSString *app = nil, *name = nil;
@@ -107,6 +131,11 @@ static NSDictionary<NSString *, NSMutableData *> *EnrollmentApp(int fd, NSString
                     }
                     if ((!pass && info) || target) {
                         Check(archive_entry_filetype(entry) == AE_IFREG, @"Enrollment app inputs must be regular files");
+                        if (pass && [target isEqualToString:name]) {
+                            image->data = EnrollmentImage(reader, size);
+                            image->size = (size_t)size;
+                            continue;
+                        }
                         Check(size <= MetadataLimit && retained <= MetadataLimit - size,
                               @"Enrollment app inputs exceed 64 MiB");
                         retained += size;
@@ -132,7 +161,7 @@ static NSDictionary<NSString *, NSMutableData *> *EnrollmentApp(int fd, NSString
                                        [@"SC_Info/" stringByAppendingFormat:@"%@.supf", name],
                                        [@"SC_Info/" stringByAppendingFormat:@"%@.v5.supf", name]];
         }
-        Check(files[wanted[0]] && files[wanted[1]] && (files[wanted[2]] || files[wanted[3]]),
+        Check(image->data && files[wanted[1]] && (files[wanted[2]] || files[wanted[3]]),
               @"IPA requires main executable and matching SINF/SUPF");
         *executable = name;
         return files;
@@ -141,8 +170,34 @@ static NSDictionary<NSString *, NSMutableData *> *EnrollmentApp(int fd, NSString
         @throw;
     } @finally { if (reader) archive_read_free(reader); }
 }
+// Account-key recovery uses the native adapter's mode and the license media type.
+// Keep the original SINF for independent validation before publishing the model.
+static NSMutableData *EnrollmentRequest(NSData *sinf, NSRange schi) {
+    const uint8_t *bytes = sinf.bytes;
+    NSRange rights = Atom(bytes, schi, "righ");
+    Check(rights.length % 8 == 0, @"Invalid SINF rights records");
+    const uint8_t *media = NULL;
+    for (NSUInteger offset = rights.location; offset < NSMaxRange(rights); offset += 8) {
+        if (memcmp(bytes + offset, "medi", 4)) continue;
+        Check(!media, @"Duplicate SINF media type");
+        media = bytes + offset;
+    }
+    Check(media, @"Missing SINF media type");
+    uint8_t request[16] = {'m', 'o', 'd', 'e', 0, 0, 0x10, 0};
+    memcpy(request + 8, media, 8);
+    NSMutableData *result = [sinf mutableCopy];
+    [result replaceBytesInRange:rights withBytes:request length:sizeof(request)];
+    uint8_t *out = result.mutableBytes;
+    PutBE32(out, (uint32_t)result.length);
+    PutBE32(out + schi.location - 8, (uint32_t)(schi.length - rights.length + sizeof(request) + 8));
+    PutBE32(out + rights.location - 8, sizeof(request) + 8);
+    return result;
+}
+
 static void Enroll(NSString *input, NSString *output, NSString *capture) {
     NSMutableDictionary<NSString *, NSMutableData *> *files = [NSMutableDictionary dictionary];
+    NSMutableData *requestSINF = nil;
+    RFile image = {0};
     uint8_t mac[6] = {0}, raw[4184] = {0}; Model model = {0};
     int inputFD = -1, outputFD = -1; NSString *temporary = nil;
     uid_t uid = getuid(); gid_t gid = getgid();
@@ -187,22 +242,28 @@ static void Enroll(NSString *input, NSString *output, NSString *capture) {
         Check(inputFD >= 0, @"Cannot open input IPA: %s", strerror(errno));
         Check(fstat(inputFD, &before) == 0 && S_ISREG(before.st_mode), @"Input IPA must be a regular file");
         NSString *executable;
-        NSDictionary *app = EnrollmentApp(inputFD, &executable);
+        NSDictionary *app = EnrollmentApp(inputFD, &executable, &image);
         [files addEntriesFromDictionary:app];
         Check(fstat(inputFD, &after) == 0 && Unchanged(before, after), @"Input IPA changed during enrollment");
-        NSData *sinf = files[[@"SC_Info/" stringByAppendingFormat:@"%@.sinf", executable]];
+        NSString *sinfName = [@"SC_Info/" stringByAppendingFormat:@"%@.sinf", executable];
+        NSData *sinf = files[sinfName];
         const uint8_t *b = sinf.bytes;
         Check(sinf.length >= 8 && BE32(b) == sinf.length && !memcmp(b + 4, "sinf", 4), @"Invalid SINF root");
         NSRange schi = Atom(b, NSMakeRange(8, sinf.length - 8), "schi");
         NSRange user = Atom(b, schi, "user"), key = Atom(b, schi, "key "), payload = Atom(b, schi, "priv");
         Check(user.length == 4 && key.length == 4 && payload.length >= 432, @"Unsupported SINF enrollment geometry");
+        requestSINF = EnrollmentRequest(sinf, schi);
         RFile inputs[64]; size_t count = 0;
         __attribute__((objc_precise_lifetime)) NSMutableArray<NSString *> *suffixes = [NSMutableArray array];
         for (NSString *name in files) {
             NSString *suffix = [name hasPrefix:@"/"] ? name : [@"/" stringByAppendingString:name.lastPathComponent];
             [suffixes addObject:suffix];
-            NSData *data = files[name]; inputs[count++] = (RFile){suffix.UTF8String, data.bytes, data.length};
+            NSData *data = [name isEqualToString:sinfName] ? requestSINF : files[name]; inputs[count++] = (RFile){suffix.UTF8String, data.bytes, data.length};
         }
+        NSString *imageSuffix = [@"/" stringByAppendingString:executable];
+        [suffixes addObject:imageSuffix];
+        image.suffix = imageSuffix.UTF8String;
+        inputs[count++] = image;
         NSString *path = [NSString stringWithFormat:@"/Applications/%@.app/%@", executable, executable];
         char error[160];
         Check(RecoverEnrollment(inputs, count, mac, path.UTF8String, b + payload.location,
@@ -219,10 +280,12 @@ static void Enroll(NSString *input, NSString *output, NSString *capture) {
         Check(link(temporary.fileSystemRepresentation, output.fileSystemRepresentation) == 0,
               @"Cannot publish enrollment without overwriting: %s", strerror(errno));
     } @finally {
+        if (image.data) munmap((void *)image.data, image.size);
         if (inputFD >= 0) close(inputFD);
         if (outputFD >= 0) close(outputFD);
         if (temporary) unlink(temporary.fileSystemRepresentation);
         for (NSMutableData *data in files.allValues) Wipe(data.mutableBytes, data.length);
+        Wipe(requestSINF.mutableBytes, requestSINF.length);
         Wipe(mac, sizeof(mac)); Wipe(raw, sizeof(raw)); Wipe(&model, sizeof(model));
     }
 }

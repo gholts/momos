@@ -7,6 +7,7 @@
 #include <libkern/OSByteOrder.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <fcntl.h>
 #include <signal.h>

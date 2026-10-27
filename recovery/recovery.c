@@ -185,11 +185,11 @@ void r_kernel_loop(RState *s,int kind){
     }
     r_fail(s,"native recovery loop limit");
 }
-static void runCFG(RState *s,RRuntime *runtime,const char *name,uint64_t start,uint64_t stop){
+static void runCFG(RState *s,RRuntime *runtime,const char *name,uint64_t start,uint64_t stop,uint64_t limit){
     size_t group=0;for(;group<sizeof(r_known_groups)/sizeof(r_known_groups[0]);++group)if(!strcmp(name,r_known_groups[group].name))break;
     if(group==sizeof(r_known_groups)/sizeof(r_known_groups[0]))r_fail(s,"missing native startup group");
     s->pc=start;
-    for(unsigned count=0;count<1000000;++count){
+    for(uint64_t count=0;count<limit;++count){
         if (*s->cancelled) r_fail(s,"cancelled");
         if(s->pc==stop)return;
         if(s->pc>=UINT64_C(0xf000000000000000)||s->pc==UINT64_C(0x720000000000))s->pc=externalCall(s,runtime,s->pc);
@@ -273,8 +273,18 @@ bool RecoverEnrollment(const RFile *files, size_t count, const uint8_t mac[6],
         r_mapZero(s,UINT64_C(0x7100fff00000),4096);
         r_mapZero(s,UINT64_C(0xf1000000000d8000),4096);
         r_mapZero(s,UINT64_C(0xf1000000000e3000),4096);
-        runCFG(s,runtime,"compact26A428AccountEntryBlocks",UINT64_C(0x100cd1c18),UINT64_C(0x10057ae74));
-        runCFG(s,runtime,"compact26A428BootstrapBlocks",UINT64_C(0x10057ae74),UINT64_C(0x1005b7438));
+        // Budget SUPF processing once; an executable may itself end in .supf.
+        const RFile *executable=matchingFile(runtime,executablePath);
+        uint64_t startupLimit=1000000;
+        for(size_t i=0;i<count;++i){
+            const RFile *file=&runtime->files[i];size_t n=strlen(file->suffix);
+            if(file!=executable&&n>=5&&!strcmp(file->suffix+n-5,".supf")){
+                if(file->size>UINT64_C(64)*1024*1024)r_fail(s,"recovery metadata too large");
+                startupLimit+=(uint64_t)file->size*16;
+            }
+        }
+        runCFG(s,runtime,"compact26A428AccountEntryBlocks",UINT64_C(0x100cd1c18),UINT64_C(0x10057ae74),startupLimit);
+        runCFG(s,runtime,"compact26A428BootstrapBlocks",UINT64_C(0x10057ae74),UINT64_C(0x1005b7438),startupLimit);
         r_kernel_loop(s,6);s->pc=UINT64_C(0x1006b10a0);
         bool matched=false;
         for(uint64_t blocks=0;blocks<8000000;++blocks){
